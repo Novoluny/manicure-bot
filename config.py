@@ -1,8 +1,6 @@
 # config.py - Настройки бота
 
 # ===== ОСНОВНЫЕ НАСТРОЙКИ =====
-TOKEN = "8761962484:AAFNykMBbxwpGmzRdYrPkm-MipOa4gHybEk"
-ADMIN_ID = 2040302103
 DB_NAME = "bookings.db"
 
 # ===== УСЛУГИ И ЦЕНЫ =====
