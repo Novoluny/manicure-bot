@@ -1,5 +1,11 @@
 # config.py - Настройки бота
 
+import os
+
+# Токен и ID берутся из переменных окружения (на Railway)
+TOKEN = os.environ.get('TOKEN')
+ADMIN_ID = int(os.environ.get('ADMIN_ID', 0))
+
 # ===== ОСНОВНЫЕ НАСТРОЙКИ =====
 DB_NAME = "bookings.db"
 
