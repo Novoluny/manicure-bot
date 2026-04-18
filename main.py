@@ -1455,38 +1455,12 @@ async def admin_back_to_menu(callback: CallbackQuery):
     )
     await callback.answer()
 
-# --- ОЧИСТКА СТАРЫХ ЗАПИСЕЙ ---
-async def clean_old_bookings():
-    three_months_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute('DELETE FROM bookings WHERE booking_date < ? AND status = "cancelled"', (three_months_ago,))
-        await db.commit()
-        print(f"✅ Очистка БД: удалены записи до {three_months_ago}")
-
-async def cleaner_scheduler():
-    """Запускает очистку БД раз в неделю"""
-    while True:
-        # Ждём до следующего воскресенья 4:00
-        now = datetime.now()
-        days_until_sunday = (6 - now.weekday()) % 7
-        next_run = now.replace(hour=4, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
-        
-        if now > next_run:
-            next_run += timedelta(days=7)
-        
-        wait_seconds = (next_run - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
-        
-        # Запускаем очистку
-        await clean_old_bookings() 
-
 # --- ЗАПУСК ---
 async def main():
     logging.basicConfig(level=logging.INFO)
     await init_db()
     
     asyncio.create_task(reminder_checker())
-    asyncio.create_task(cleaner_scheduler())
     
     print("✅ Бот успешно запущен!")
     print(f"📁 База данных: {DB_NAME}")
