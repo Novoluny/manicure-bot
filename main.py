@@ -15,7 +15,7 @@ import config
 
 # --- НАСТРОЙКИ ИЗ CONFIG ---
 TOKEN = config.TOKEN
-
+ADMIN_ID = config.ADMIN_ID  # ← ДОБАВЬ ЭТУ СТРОКУ
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bookings.db")
 services = config.services
 SALON_ADDRESS = config.SALON_ADDRESS
