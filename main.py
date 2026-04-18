@@ -927,19 +927,37 @@ async def select_time(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("confirm_"))
 async def confirm_booking(callback: CallbackQuery):
     parts = callback.data.split("_")
+    
+    # Проверяем, что формат данных правильный
+    if len(parts) < 4:
+        await callback.answer("❌ Ошибка: неверный формат данных", show_alert=True)
+        return
+    
     service_key = parts[1]
     date_str = parts[2]
     time_slot = parts[3]
     
     user_id = callback.from_user.id
     
+    # Проверяем, есть ли данные пользователя
     if user_id not in user_data:
-        await callback.answer("Ошибка, начните запись заново", show_alert=True)
+        await callback.answer("❌ Время сессии истекло. Пожалуйста, начните запись заново.", show_alert=True)
+        # Удаляем "битое" сообщение с кнопкой
+        await callback.message.delete()
+        return
+    
+    # Проверяем, есть ли временная бронь
+    if "temp_booking" not in user_data[user_id]:
+        await callback.answer("❌ Данные записи не найдены. Начните запись заново.", show_alert=True)
+        await callback.message.delete()
+        if user_id in user_data:
+            del user_data[user_id]
         return
     
     service_name = services[service_key]["name"]
     selected_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
     
+    # Сохраняем в БД
     booking_id = await add_booking(
         user_id=user_id,
         user_name=callback.from_user.full_name,
@@ -950,6 +968,7 @@ async def confirm_booking(callback: CallbackQuery):
         booking_time=time_slot
     )
     
+    # Отправляем уведомление мастеру
     await bot.send_message(
         ADMIN_ID,
         f"🆕 НОВАЯ ЗАПИСЬ!\n\n"
@@ -962,8 +981,10 @@ async def confirm_booking(callback: CallbackQuery):
         f"🆔 ID: {booking_id}"
     )
     
+    # Удаляем старое сообщение с кнопками
     await callback.message.delete()
     
+    # Отправляем новое сообщение с подтверждением
     if callback.from_user.id == ADMIN_ID:
         reply_markup = admin_main_keyboard()
     else:
@@ -982,9 +1003,11 @@ async def confirm_booking(callback: CallbackQuery):
         reply_markup=reply_markup
     )
     
+    # Очищаем временные данные
     if user_id in user_data:
         del user_data[user_id]
     
+    # Отвечаем на коллбэк, чтобы убрать часики у кнопки
     await callback.answer("✅ Запись создана!")
 
 @dp.callback_query(lambda c: c.data == "cancel_booking_temp")
