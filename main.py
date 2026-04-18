@@ -682,6 +682,7 @@ def confirm_block_day_keyboard(date_str: str):
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     if message.from_user.id == ADMIN_ID:
+        print(f"DEBUG: USER ID = {message.from_user.id}, ADMIN_ID = {ADMIN_ID}")
         keyboard = admin_main_keyboard()
     else:
         keyboard = main_keyboard()
