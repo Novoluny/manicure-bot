@@ -4,7 +4,7 @@ import os
 
 # Токен и ID берутся из переменных окружения (на Railway)
 TOKEN = os.environ.get('TOKEN')
-ADMIN_ID = int(os.environ.get('ADMIN_ID', 2040302103))
+ADMIN_ID = 2040302103  # жёстко прописанный ID
 
 # ===== ОСНОВНЫЕ НАСТРОЙКИ =====
 DB_NAME = "bookings.db"
