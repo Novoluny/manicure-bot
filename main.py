@@ -899,7 +899,7 @@ async def select_time(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     if user_id not in user_data:
-        await callback.answer("Время сессии истекло. Пожалуйста, начните запись заново", show_alert=True)
+        await callback.answer("Ошибка, начните запись заново", show_alert=True)
         return
     
     service_key = user_data[user_id]["service"]
@@ -927,37 +927,19 @@ async def select_time(callback: CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("confirm_"))
 async def confirm_booking(callback: CallbackQuery):
     parts = callback.data.split("_")
-    
-    # Проверяем, что формат данных правильный
-    if len(parts) < 4:
-        await callback.answer("❌ Ошибка: неверный формат данных", show_alert=True)
-        return
-    
     service_key = parts[1]
     date_str = parts[2]
     time_slot = parts[3]
     
     user_id = callback.from_user.id
     
-    # Проверяем, есть ли данные пользователя
     if user_id not in user_data:
-        await callback.answer("❌ Время сессии истекло. Пожалуйста, начните запись заново.", show_alert=True)
-        # Удаляем "битое" сообщение с кнопкой
-        await callback.message.delete()
-        return
-    
-    # Проверяем, есть ли временная бронь
-    if "temp_booking" not in user_data[user_id]:
-        await callback.answer("❌ Данные записи не найдены. Начните запись заново.", show_alert=True)
-        await callback.message.delete()
-        if user_id in user_data:
-            del user_data[user_id]
+        await callback.answer("Ошибка, начните запись заново", show_alert=True)
         return
     
     service_name = services[service_key]["name"]
     selected_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d.%m.%Y")
     
-    # Сохраняем в БД
     booking_id = await add_booking(
         user_id=user_id,
         user_name=callback.from_user.full_name,
@@ -968,7 +950,6 @@ async def confirm_booking(callback: CallbackQuery):
         booking_time=time_slot
     )
     
-    # Отправляем уведомление мастеру
     await bot.send_message(
         ADMIN_ID,
         f"🆕 НОВАЯ ЗАПИСЬ!\n\n"
@@ -981,10 +962,8 @@ async def confirm_booking(callback: CallbackQuery):
         f"🆔 ID: {booking_id}"
     )
     
-    # Удаляем старое сообщение с кнопками
     await callback.message.delete()
     
-    # Отправляем новое сообщение с подтверждением
     if callback.from_user.id == ADMIN_ID:
         reply_markup = admin_main_keyboard()
     else:
@@ -1003,11 +982,9 @@ async def confirm_booking(callback: CallbackQuery):
         reply_markup=reply_markup
     )
     
-    # Очищаем временные данные
     if user_id in user_data:
         del user_data[user_id]
     
-    # Отвечаем на коллбэк, чтобы убрать часики у кнопки
     await callback.answer("✅ Запись создана!")
 
 @dp.callback_query(lambda c: c.data == "cancel_booking_temp")
@@ -1478,38 +1455,12 @@ async def admin_back_to_menu(callback: CallbackQuery):
     )
     await callback.answer()
 
-# --- ОЧИСТКА СТАРЫХ ЗАПИСЕЙ ---
-async def clean_old_bookings():
-    three_months_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute('DELETE FROM bookings WHERE booking_date < ? AND status = "cancelled"', (three_months_ago,))
-        await db.commit()
-        print(f"✅ Очистка БД: удалены записи до {three_months_ago}")
-
-async def cleaner_scheduler():
-    """Запускает очистку БД раз в неделю"""
-    while True:
-        # Ждём до следующего воскресенья 4:00
-        now = datetime.now()
-        days_until_sunday = (6 - now.weekday()) % 7
-        next_run = now.replace(hour=4, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
-        
-        if now > next_run:
-            next_run += timedelta(days=7)
-        
-        wait_seconds = (next_run - now).total_seconds()
-        await asyncio.sleep(wait_seconds)
-        
-        # Запускаем очистку
-        await clean_old_bookings() 
-
 # --- ЗАПУСК ---
 async def main():
     logging.basicConfig(level=logging.INFO)
     await init_db()
     
     asyncio.create_task(reminder_checker())
-    asyncio.create_task(cleaner_scheduler())
     
     print("✅ Бот успешно запущен!")
     print(f"📁 База данных: {DB_NAME}")
