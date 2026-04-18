@@ -16,7 +16,6 @@ import config
 # --- НАСТРОЙКИ ИЗ CONFIG ---
 TOKEN = config.TOKEN
 ADMIN_ID = config.ADMIN_ID
-DB_NAME = config.DB_NAME
 DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bookings.db")
 services = config.services
 SALON_ADDRESS = config.SALON_ADDRESS
@@ -49,6 +48,40 @@ DAYS_RU_SHORT = {
     5: "СБ",
     6: "ВС"
 }
+
+# --- ФУНКЦИИ ДЛЯ ГИБКОГО ГРАФИКА ---
+def get_work_hours_for_day(weekday: int) -> list:
+    """
+    Возвращает список интервалов работы для указанного дня недели.
+    Формат: [(start_hour, end_hour), ...]
+    """
+    # Если есть кастомное расписание
+    if hasattr(config, 'CUSTOM_WORK_HOURS') and config.CUSTOM_WORK_HOURS:
+        if weekday in config.CUSTOM_WORK_HOURS:
+            return config.CUSTOM_WORK_HOURS[weekday]
+        else:
+            return []  # день не указан - выходной
+    else:
+        # Используем старую систему
+        if weekday in WORKING_DAYS:
+            return [(WORK_HOURS_START, WORK_HOURS_END)]
+        else:
+            return []
+
+def get_all_work_hours_for_day(weekday: int) -> list:
+    """
+    Возвращает список всех часов работы для указанного дня (плоский список)
+    """
+    intervals = get_work_hours_for_day(weekday)
+    hours = []
+    for start, end in intervals:
+        for h in range(start, end + 1):
+            hours.append(f"{h}:00")
+    return hours
+
+def is_work_day(weekday: int) -> bool:
+    """Проверяет, является ли день рабочим"""
+    return len(get_work_hours_for_day(weekday)) > 0
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 bot = Bot(token=TOKEN)
@@ -453,7 +486,7 @@ def services_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 async def generate_calendar(year: int, month: int, selected_service: str = None):
-    """Асинхронная генерация календаря с учётом заблокированных дней"""
+    """Асинхронная генерация календаря с учётом заблокированных дней и гибкого графика"""
     month_name_ru = {
         1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель",
         5: "Май", 6: "Июнь", 7: "Июль", 8: "Август",
@@ -482,6 +515,7 @@ async def generate_calendar(year: int, month: int, selected_service: str = None)
     keyboard.append(week_row)
     
     today = date.today()
+    now = datetime.now()
     
     for week in month_matrix:
         row = []
@@ -491,13 +525,27 @@ async def generate_calendar(year: int, month: int, selected_service: str = None)
             else:
                 cell_date = date(year, month, day)
                 date_str = cell_date.strftime("%Y-%m-%d")
+                weekday = cell_date.weekday()
                 
-                # Проверяем, заблокирован ли день
+                # Проверяем, рабочий ли день (по гибкому графику)
+                is_working = is_work_day(weekday)
+                
+                # Проверяем, можно ли записаться на сегодня
+                can_book_today = True
+                if cell_date == today:
+                    work_hours = get_all_work_hours_for_day(weekday)
+                    if work_hours:
+                        future_hours = [int(h.split(':')[0]) for h in work_hours if int(h.split(':')[0]) > now.hour]
+                        if not future_hours:
+                            can_book_today = False
+                
                 if date_str in blocked_dates:
                     text = f"🔴{day}"
-                elif cell_date.weekday() not in WORKING_DAYS:
+                elif not is_working:
                     text = f"🔴{day}"
                 elif cell_date < today:
+                    text = f"❌{day}"
+                elif cell_date == today and not can_book_today:
                     text = f"❌{day}"
                 else:
                     text = f"{day}"
@@ -512,12 +560,30 @@ async def generate_calendar(year: int, month: int, selected_service: str = None)
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 async def time_keyboard(date_str: str, service_key: str = None):
-    all_hours = [f"{h}:00" for h in range(WORK_HOURS_START, WORK_HOURS_END + 1)]
+    selected_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    weekday = selected_date.weekday()
+    today = datetime.now().date()
+    
+    # Получаем рабочие часы для этого дня
+    work_hours = get_all_work_hours_for_day(weekday)
+    
+    if not work_hours:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ В этот день мастер не работает", callback_data="ignore")],
+            [InlineKeyboardButton(text="📅 Назад к календарю", callback_data=f"back_to_calendar_{service_key or ''}")]
+        ])
+        return keyboard
+    
     busy = await get_occupied_slots(date_str)
     blocked_hours = await get_blocked_hours(date_str)
     
     busy += blocked_hours
-    free_hours = [h for h in all_hours if h not in busy]
+    free_hours = [h for h in work_hours if h not in busy]
+    
+    # Если это сегодняшний день - убираем прошедшие часы
+    if selected_date == today:
+        current_hour = datetime.now().hour
+        free_hours = [h for h in free_hours if int(h.split(':')[0]) > current_hour]
     
     buttons = []
     row = []
@@ -589,10 +655,14 @@ def admin_block_keyboard(date_str: str = None):
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def admin_block_hour_keyboard(date_str: str):
-    buttons = []
-    all_hours = [f"{h}:00" for h in range(WORK_HOURS_START, WORK_HOURS_END + 1)]
+    selected_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    weekday = selected_date.weekday()
     
-    for hour in all_hours:
+    # Получаем рабочие часы для этого дня
+    work_hours = get_all_work_hours_for_day(weekday)
+    
+    buttons = []
+    for hour in work_hours:
         buttons.append([InlineKeyboardButton(text=f"🔒 {hour}", callback_data=f"admin_block_hour_{date_str}_{hour}")])
     
     buttons.append([InlineKeyboardButton(text="🔙 Назад к дате", callback_data=f"admin_block_date_back_{date_str}")])
@@ -666,8 +736,6 @@ async def show_my_bookings(message: Message):
 @dp.message(lambda m: m.text == "📸 Мои работы")
 async def show_works(message: Message):
     # Папка с фото - используем абсолютный путь
-    import os
-    # Получаем путь к папке, где находится Bot.py
     bot_dir = os.path.dirname(os.path.abspath(__file__))
     photos_folder = os.path.join(bot_dir, "photos")
     photos_found = []
@@ -693,7 +761,7 @@ async def show_works(message: Message):
         # Если есть еще фото, отправляем их отдельным сообщением (по одному)
         if len(photos_found) > 1:
             await message.answer("📸 *Ещё примеры моих работ:*", parse_mode=ParseMode.MARKDOWN)
-            for photo_file in photos_found[1:3]:  # максимум 3 фото, чтобы не спамить
+            for photo_file in photos_found[1:3]:
                 photo = FSInputFile(os.path.join(photos_folder, photo_file))
                 await message.answer_photo(photo=photo)
     else:
@@ -707,7 +775,6 @@ async def show_works(message: Message):
                 parse_mode=ParseMode.MARKDOWN
             )
         else:
-            # Если нет ни локальных фото, ни ссылки
             await message.answer(
                 f"📸 *Портфолио мастера*\n\n"
                 f"Скоро здесь появятся фото моих работ! 💅\n\n"
@@ -719,17 +786,25 @@ async def show_works(message: Message):
             
 @dp.message(lambda m: m.text == "📍 Контакты")
 async def show_contacts(message: Message):
-    working_days_str = []
-    for day in WORKING_DAYS:
-        working_days_str.append(DAYS_RU[day].capitalize())
-    work_schedule = ", ".join(working_days_str)
+    # Формируем строку с рабочими днями и часами
+    full_days_names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+    
+    schedule_lines = []
+    for i in range(7):
+        intervals = get_work_hours_for_day(i)
+        if intervals:
+            hours_str = []
+            for start, end in intervals:
+                hours_str.append(f"{start}:00-{end}:00")
+            schedule_lines.append(f"{full_days_names[i].capitalize()}: {', '.join(hours_str)}")
+    
+    work_schedule = "\n".join(schedule_lines) if schedule_lines else "Выходной"
     
     await message.answer(
         f"📍 Адрес: {SALON_ADDRESS}\n"
         f"📞 Телефон: {MASTER_PHONE}\n"
         f"📱 Instagram: {MASTER_INSTAGRAM}\n"
-        f"⏰ Часы работы: {WORK_HOURS_START}:00 - {WORK_HOURS_END}:00\n"
-        f"📅 Рабочие дни: {work_schedule}\n\n"
+        f"📅 График работы:\n{work_schedule}\n\n"
         f"📩 По всем вопросам: @{MASTER_USERNAME}"
     )
 
@@ -780,14 +855,26 @@ async def select_date(callback: CallbackQuery):
         return
     
     selected_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    weekday = selected_date.weekday()
+    today = datetime.now().date()
+    now = datetime.now()
     
-    if selected_date.weekday() not in WORKING_DAYS:
+    # Проверяем по гибкому графику
+    if not is_work_day(weekday):
         await callback.answer("❌ В этот день мастер не работает!", show_alert=True)
         return
     
-    if selected_date < datetime.now().date():
+    if selected_date < today:
         await callback.answer("❌ Нельзя записаться на прошедшую дату!", show_alert=True)
         return
+    
+    # Если выбран сегодняшний день, проверяем, есть ли ещё часы
+    if selected_date == today:
+        work_hours = get_all_work_hours_for_day(weekday)
+        future_hours = [int(h.split(':')[0]) for h in work_hours if int(h.split(':')[0]) > now.hour]
+        if not future_hours:
+            await callback.answer("❌ На сегодня уже нет свободного времени!", show_alert=True)
+            return
     
     if await is_day_blocked(date_str):
         await callback.answer("❌ Этот день полностью заблокирован мастером!", show_alert=True)
@@ -812,7 +899,7 @@ async def select_time(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     if user_id not in user_data:
-        await callback.answer("Ошибка, начните запись заново", show_alert=True)
+        await callback.answer("Время сессии истекло. Пожалуйста, начните запись заново", show_alert=True)
         return
     
     service_key = user_data[user_id]["service"]
@@ -1368,18 +1455,42 @@ async def admin_back_to_menu(callback: CallbackQuery):
     )
     await callback.answer()
 
+# --- ОЧИСТКА СТАРЫХ ЗАПИСЕЙ ---
+async def clean_old_bookings():
+    three_months_ago = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+    async with aiosqlite.connect(DB_NAME) as db:
+        await db.execute('DELETE FROM bookings WHERE booking_date < ? AND status = "cancelled"', (three_months_ago,))
+        await db.commit()
+        print(f"✅ Очистка БД: удалены записи до {three_months_ago}")
+
+async def cleaner_scheduler():
+    """Запускает очистку БД раз в неделю"""
+    while True:
+        # Ждём до следующего воскресенья 4:00
+        now = datetime.now()
+        days_until_sunday = (6 - now.weekday()) % 7
+        next_run = now.replace(hour=4, minute=0, second=0, microsecond=0) + timedelta(days=days_until_sunday)
+        
+        if now > next_run:
+            next_run += timedelta(days=7)
+        
+        wait_seconds = (next_run - now).total_seconds()
+        await asyncio.sleep(wait_seconds)
+        
+        # Запускаем очистку
+        await clean_old_bookings() 
+
 # --- ЗАПУСК ---
 async def main():
     logging.basicConfig(level=logging.INFO)
     await init_db()
     
     asyncio.create_task(reminder_checker())
+    asyncio.create_task(cleaner_scheduler())
     
     print("✅ Бот успешно запущен!")
     print(f"📁 База данных: {DB_NAME}")
     print(f"👑 Админ ID: {ADMIN_ID}")
-    print(f"📅 Рабочие дни: {', '.join([DAYS_RU[d] for d in WORKING_DAYS])}")
-    print(f"⏰ Часы работы: {WORK_HOURS_START}:00 - {WORK_HOURS_END}:00")
     print(f"🚫 Блокировка времени: активна")
     print("\n📱 Для админа доступна кнопка '👑 Админ-панель'")
     
